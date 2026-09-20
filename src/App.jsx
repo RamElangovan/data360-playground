@@ -1,4 +1,11 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+
+function uuid() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  });
+}
 
 const SAMPLE_SINGLE = {
   data: [
@@ -27,22 +34,62 @@ const SAMPLE_MULTIPLE = {
     },
     {
       device_id: '5ea21294-00b3-469f-b306-aB42d560ce2d',
-      device_OS: 'Android 14',
+      device_OS: 'iOS 16.7.10',
       session_id: '3c103817-b2da-4ce1-91de-652e69a55f82',
       session_datetime: new Date(Date.now() - 120_000).toISOString(),
-      email: 'james.smith@coralcloudresorts.com',
-      first_name: 'James',
+      email: '',
+      first_name: 'Sarah',
+      last_name: 'Taylor',
+    },
+    {
+      device_id: '2r8461b6-082b-4c83-bbee-40254d023fd0',
+      device_OS: 'iOS 16.7.10',
+      session_id: '3c103817-b2da-4ce1-91de-652e69a55f83',
+      session_datetime: new Date(Date.now() - 180_000).toISOString(),
+      email: 'mary.johnson1@example.com',
+      first_name: 'Mary',
+      last_name: 'Johnson',
+    },
+    {
+      device_id: 'ff9db0ee-6058-4701-8f4d-ac7d2f875e74',
+      device_OS: 'Android 14',
+      session_id: '3c103817-b2da-4ce1-91de-652e69a55f84',
+      session_datetime: new Date(Date.now() - 240_000).toISOString(),
+      email: 'lwhite@example.com',
+      first_name: 'Lisa',
       last_name: 'Smith',
     },
   ],
 };
 
+const SAMPLE_LOYALTY = {
+  data: [
+    {
+      description: 'This will make them Titanium.',
+      guest_id: '151',
+      transaction_type: 'earn',
+      transaction_date: new Date().toISOString(),
+      transaction_id: '999999',
+      points: 2345,
+    },
+  ],
+};
+
+const STORAGE_KEY = 'dc_playground_creds';
+
 export default function App() {
-  const [domain, setDomain] = useState('');
-  const [clientId, setClientId] = useState('');
-  const [clientSecret, setClientSecret] = useState('');
+  const saved = (() => { try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch { return {}; } })();
+  const [domain, setDomain] = useState(saved.domain || '');
+  const [clientId, setClientId] = useState(saved.clientId || '');
+  const [clientSecret, setClientSecret] = useState(saved.clientSecret || '');
   const [connectorName, setConnectorName] = useState('CCRMobile');
   const [objectName, setObjectName] = useState('user_session');
+
+  useEffect(() => {
+    if (domain || clientId) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ domain, clientId, clientSecret }));
+    }
+  }, [domain, clientId, clientSecret]);
 
   const [authState, setAuthState] = useState(null);
   const [authLoading, setAuthLoading] = useState(false);
@@ -133,15 +180,36 @@ export default function App() {
     }
   }
 
-  function loadSample(sample) {
+  function loadSample(sample, connector, object) {
     const copy = JSON.parse(JSON.stringify(sample));
     const now = new Date();
     copy.data.forEach((rec, i) => {
-      rec.session_datetime = new Date(now - i * 120_000).toISOString();
+      if ('session_datetime' in rec) rec.session_datetime = new Date(now - i * 120_000).toISOString();
+      if ('transaction_date' in rec) rec.transaction_date = new Date(now - i * 120_000).toISOString();
     });
+    if (connector) setConnectorName(connector);
+    if (object) setObjectName(object);
     setPayload(JSON.stringify(copy, null, 2));
     setPayloadError('');
     setResponse(null);
+  }
+
+  function freshIds() {
+    try {
+      const parsed = JSON.parse(payload);
+      const now = new Date();
+      (parsed.data || []).forEach((rec, i) => {
+        if ('session_id' in rec) rec.session_id = uuid();
+        if ('device_id' in rec) rec.device_id = uuid();
+        if ('session_datetime' in rec) rec.session_datetime = new Date(now - i * 120_000).toISOString();
+        if ('transaction_date' in rec) rec.transaction_date = new Date(now - i * 120_000).toISOString();
+        if ('transaction_id' in rec) rec.transaction_id = String(Math.floor(Math.random() * 9_000_000 + 1_000_000));
+      });
+      setPayload(JSON.stringify(parsed, null, 2));
+      setPayloadError('');
+    } catch (e) {
+      setPayloadError('Invalid JSON: ' + e.message);
+    }
   }
 
   const canAuth = domain && clientId && clientSecret && !authLoading;
@@ -264,17 +332,32 @@ export default function App() {
             <span className="preset-label">Load sample:</span>
             <button
               className="btn-ghost"
-              onClick={() => loadSample(SAMPLE_SINGLE)}
+              onClick={() => loadSample(SAMPLE_SINGLE, 'CCRMobile', 'user_session')}
               disabled={!authState}
             >
               Single session
             </button>
             <button
               className="btn-ghost"
-              onClick={() => loadSample(SAMPLE_MULTIPLE)}
+              onClick={() => loadSample(SAMPLE_MULTIPLE, 'CCRMobile', 'user_session')}
               disabled={!authState}
             >
-              Multiple sessions
+              4 sessions
+            </button>
+            <button
+              className="btn-ghost"
+              onClick={() => loadSample(SAMPLE_LOYALTY, 'CCRLoyalty', 'points_transactions')}
+              disabled={!authState}
+            >
+              Loyalty transaction
+            </button>
+            <button
+              className="btn-ghost"
+              onClick={freshIds}
+              disabled={!authState}
+              title="Regenerate session_id, device_id, and timestamps to avoid duplicate errors"
+            >
+              ↻ Fresh IDs
             </button>
           </div>
 
