@@ -1,0 +1,23 @@
+{
+  "name": "data360-ingestion-playground",
+  "version": "1.0.0",
+  "description": "Data 360 Ingestion API Playground - Exercise 2-5",
+  "type": "module",
+  "engines": {
+    "node": "20.x"
+  },
+  "scripts": {
+    "dev": "concurrently \"node server.js\" \"vite\"",
+    "build": "vite build",
+    "start": "node server.js",
+    "heroku-postbuild": "npm run build"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "express": "^4.21.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "vite": "^6.0.7"
+  }
+}
