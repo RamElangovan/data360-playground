@@ -97,6 +97,7 @@ const TABS = [
   { id: 'action', label: 'Data Action' },
   { id: 'webhook', label: 'Webhook Receiver' },
   { id: 'agent', label: 'Service Agent' },
+  { id: 'agentchat', label: 'Agent Chat' },
 ];
 
 // ── Shared components ─────────────────────────────────────────────
@@ -1027,6 +1028,190 @@ function AgentTab() {
   );
 }
 
+// ── Agent Chat Tab (Sessions API inline chat) ─────────────────────
+
+const AGENT_ID_KEY = 'dc_playground_agent_id';
+
+function extractReply(data) {
+  // Handle multiple Agentforce API response shapes
+  const msgs = data.messages || data.data?.messages || [];
+  for (const m of msgs) {
+    if (m.type === 'Inform' || m.role === 'assistant') {
+      const text = m.message ?? m.text ?? m.content;
+      if (typeof text === 'string') return text;
+      if (Array.isArray(text)) return text.map(c => c.text || '').join('');
+      if (typeof text === 'object') {
+        const parts = text?.content || [];
+        return parts.map(c => c.text || '').join('') || JSON.stringify(text);
+      }
+    }
+  }
+  return data.message || data.text || JSON.stringify(data);
+}
+
+function AgentChatTab({ authState }) {
+  const [agentId, setAgentId] = useState(() => localStorage.getItem(AGENT_ID_KEY) || '');
+  const [sessionId, setSessionId] = useState(null);
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState('');
+  const [starting, setStarting] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState('');
+  const messagesEndRef = React.useRef(null);
+
+  React.useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, sending]);
+
+  if (!authState) return <GateMessage />;
+
+  async function startSession() {
+    if (!agentId.trim()) return;
+    localStorage.setItem(AGENT_ID_KEY, agentId.trim());
+    setStarting(true);
+    setError('');
+    setMessages([]);
+    try {
+      const res = await fetch('/api/agent/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orgAccessToken: authState.orgAccessToken,
+          orgInstanceUrl: authState.orgInstanceUrl,
+          agentId: agentId.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.message || data.error || JSON.stringify(data));
+      } else {
+        setSessionId(data.sessionId);
+      }
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  async function sendMessage(e) {
+    e?.preventDefault();
+    const text = input.trim();
+    if (!text || sending) return;
+    setInput('');
+    setMessages(m => [...m, { role: 'user', text }]);
+    setSending(true);
+    try {
+      const res = await fetch('/api/agent/message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orgAccessToken: authState.orgAccessToken,
+          orgInstanceUrl: authState.orgInstanceUrl,
+          sessionId,
+          text,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setMessages(m => [...m, { role: 'error', text: data.message || data.error || JSON.stringify(data) }]);
+      } else {
+        setMessages(m => [...m, { role: 'assistant', text: extractReply(data) }]);
+      }
+    } catch (e) {
+      setMessages(m => [...m, { role: 'error', text: e.message }]);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function endSession() {
+    if (sessionId) {
+      fetch('/api/agent/session/' + sessionId, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orgAccessToken: authState.orgAccessToken, orgInstanceUrl: authState.orgInstanceUrl }),
+      }).catch(() => {});
+    }
+    setSessionId(null);
+    setMessages([]);
+    setError('');
+  }
+
+  if (!sessionId) {
+    return (
+      <div className="tab-content">
+        <div className="agent-setup">
+          <div className="agent-setup-icon">🤖</div>
+          <h2 className="agent-setup-title">Start Agent Conversation</h2>
+          <p className="agent-setup-sub">Enter your Agentforce agent ID to open an inline chat session.</p>
+          <div className="agent-setup-hint">
+            Setup → <strong>Agents</strong> → click your agent → copy the <code>projectId</code> from the URL
+          </div>
+          <div className="field" style={{ width: '100%', maxWidth: 420 }}>
+            <label>Agent ID</label>
+            <input
+              type="text"
+              value={agentId}
+              onChange={e => setAgentId(e.target.value)}
+              placeholder="1bYaZ0000001Ek5UAE"
+              onKeyDown={e => e.key === 'Enter' && startSession()}
+            />
+          </div>
+          {error && <div className="alert alert-error" style={{ maxWidth: 420, width: '100%' }}>{error}</div>}
+          <button className="btn-primary" onClick={startSession} disabled={!agentId.trim() || starting}>
+            {starting ? 'Starting…' : 'Start Conversation →'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="tab-content agent-chat-wrap">
+      <div className="agent-chat-topbar">
+        <span className="agent-chat-label">🤖 Agent Chat</span>
+        <span className="agent-chat-id">{sessionId}</span>
+        <button className="btn-ghost btn-xs" style={{ marginLeft: 'auto' }} onClick={endSession}>
+          End Session
+        </button>
+      </div>
+      <div className="agent-messages">
+        {messages.length === 0 && (
+          <div className="agent-empty">Session started — say hello!</div>
+        )}
+        {messages.map((m, i) => (
+          <div key={i} className={`agent-msg agent-msg-${m.role}`}>
+            <div className="agent-bubble">{m.text}</div>
+          </div>
+        ))}
+        {sending && (
+          <div className="agent-msg agent-msg-assistant">
+            <div className="agent-bubble agent-typing">
+              <span /><span /><span />
+            </div>
+          </div>
+        )}
+        <div ref={messagesEndRef} />
+      </div>
+      <form className="agent-input-row" onSubmit={sendMessage}>
+        <input
+          className="agent-input"
+          type="text"
+          placeholder="Type a message…"
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          disabled={sending}
+          autoFocus
+        />
+        <button className="btn-primary" type="submit" disabled={!input.trim() || sending}>
+          Send
+        </button>
+      </form>
+    </div>
+  );
+}
+
 // ── Root App ──────────────────────────────────────────────────────
 
 export default function App() {
@@ -1070,6 +1255,7 @@ export default function App() {
         {activeTab === 'graphs' && <DataGraphsTab authState={authState} />}
         {activeTab === 'webhook' && <WebhookTab />}
         {activeTab === 'agent' && <AgentTab />}
+        {activeTab === 'agentchat' && <AgentChatTab authState={authState} />}
       </main>
 
       <footer className="footer">
