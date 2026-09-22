@@ -281,8 +281,9 @@ app.get('/api/webhook/url', async (req, res) => {
       return res.json({ url: tunnel.public_url + '/webhook', via: 'ngrok' });
     }
   } catch {}
-  // Fall back to request origin
-  const origin = `${req.protocol}://${req.get('host')}`;
+  // Fall back to request origin — honour x-forwarded-proto set by reverse proxies (Render, Heroku)
+  const proto = req.get('x-forwarded-proto') || req.protocol;
+  const origin = `${proto}://${req.get('host')}`;
   res.json({ url: origin + '/webhook', via: 'local' });
 });
 
