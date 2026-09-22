@@ -943,68 +943,57 @@ function WebhookTab() {
 
 const AGENT_SNIPPET_KEY = 'dc_playground_agent_snippet';
 
-function buildEmbedPage(snippet) {
-  return `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      background: #f8f9fb;
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 12px;
-      color: #514f4d;
-      padding: 32px;
-      text-align: center;
-    }
-    .icon { font-size: 48px; }
-    .title { font-size: 18px; font-weight: 600; color: #032d60; }
-    .sub { font-size: 13px; color: #706e6b; max-width: 320px; line-height: 1.5; }
-    .arrow { margin-top: 16px; font-size: 13px; color: #0176d3; font-weight: 500; }
-  </style>
-</head>
-<body>
-  <div class="icon">💬</div>
-  <div class="title">Your Service Agent is ready</div>
-  <div class="sub">Click the chat button in the bottom-right corner to start the conversation.</div>
-  <div class="arrow">↘ Look for the chat icon</div>
-  ${snippet}
-</body>
-</html>`;
+async function injectSnippet(snippetHtml) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(`<div>${snippetHtml}</div>`, 'text/html');
+  const scripts = Array.from(doc.querySelectorAll('script'));
+
+  for (const script of scripts) {
+    await new Promise((resolve) => {
+      const el = document.createElement('script');
+      el.type = script.type || 'text/javascript';
+      const src = script.getAttribute('src');
+      if (src) {
+        el.src = src;
+        const onloadAttr = script.getAttribute('onload');
+        el.onload = () => { if (onloadAttr) { try { eval(onloadAttr); } catch(e) {} } resolve(); }; // eslint-disable-line no-eval
+        el.onerror = resolve;
+      } else {
+        el.textContent = script.textContent;
+        resolve();
+      }
+      document.head.appendChild(el);
+    });
+  }
 }
 
 function AgentTab() {
   const [snippet, setSnippet] = useState(() => localStorage.getItem(AGENT_SNIPPET_KEY) || '');
   const [launched, setLaunched] = useState(false);
+  const [injected, setInjected] = useState(false);
 
-  function launch() {
+  async function launch() {
     if (!snippet.trim()) return;
     localStorage.setItem(AGENT_SNIPPET_KEY, snippet.trim());
     setLaunched(true);
+    if (!injected) {
+      await injectSnippet(snippet.trim());
+      setInjected(true);
+    }
   }
 
   if (launched) {
     return (
-      <div className="tab-content agent-chat-wrap">
-        <div className="agent-chat-topbar">
-          <span className="agent-chat-label">🤖 Service Agent — Embedded</span>
-          <button className="btn-ghost btn-xs" style={{ marginLeft: 'auto' }} onClick={() => setLaunched(false)}>
+      <div className="tab-content">
+        <div className="agent-launched">
+          <div className="agent-launched-icon">💬</div>
+          <h2 className="agent-setup-title">Service Agent Ready</h2>
+          <p className="agent-setup-sub">Look for the chat button in the <strong>bottom-right corner</strong> of this page.</p>
+          <div className="agent-launched-arrow">↘ Chat icon is down there</div>
+          <button className="btn-ghost" style={{ marginTop: 24 }} onClick={() => setLaunched(false)}>
             ← Change snippet
           </button>
         </div>
-        <iframe
-          className="agent-iframe"
-          srcDoc={buildEmbedPage(snippet)}
-          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation"
-          title="Agentforce Chat"
-        />
       </div>
     );
   }

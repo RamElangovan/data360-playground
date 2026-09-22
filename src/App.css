@@ -1118,33 +1118,22 @@ body {
   text-align: center;
 }
 
-.agent-chat-wrap {
-  display: flex !important;
-  flex-direction: column;
-  height: calc(100vh - 130px);
-  padding: 0 !important;
-  overflow: hidden;
-}
-.agent-chat-topbar {
+.agent-launched {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 10px;
-  padding: 10px 20px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
-  flex-shrink: 0;
+  gap: 18px;
+  padding: 52px 24px;
+  max-width: 520px;
+  margin: 0 auto;
+  text-align: center;
 }
-.agent-chat-label { font-size: 13px; font-weight: 600; }
-.agent-chat-id {
-  font-size: 11px;
-  color: var(--text-muted);
-  background: #f3f2f2;
-  padding: 2px 8px;
-  border-radius: 4px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 260px;
+.agent-launched-icon { font-size: 56px; }
+.agent-launched-arrow {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--primary);
+  letter-spacing: .5px;
 }
 .agent-messages {
   flex: 1;
