@@ -375,7 +375,7 @@ app.post('/api/mcp/initiate', async (req, res) => {
   mcpSessions.set(sessionId, { domain, clientId, clientSecret, serverUrl: serverUrl || 'https://api.salesforce.com/platform/mcp/v1/data/data360', createdAt: Date.now() });
 
   const proto = req.get('x-forwarded-proto') || req.protocol;
-  const callbackUrl = `${proto}://${req.get('host')}/callback`;
+  const callbackUrl = `${proto}://${req.get('host')}/oauth/callback`;
 
   const authUrl = `https://${domain}/services/oauth2/authorize?` + new URLSearchParams({
     response_type: 'code',
@@ -388,7 +388,7 @@ app.post('/api/mcp/initiate', async (req, res) => {
   res.json({ authUrl, sessionId });
 });
 
-app.get('/callback', async (req, res) => {
+app.get('/oauth/callback', async (req, res) => {
   const { code, state, error, error_description } = req.query;
 
   if (error) return res.redirect(`/?mcp_error=${encodeURIComponent(error_description || error)}`);
@@ -397,7 +397,7 @@ app.get('/callback', async (req, res) => {
   if (!session) return res.redirect('/?mcp_error=Session+expired+or+invalid.+Please+start+again.');
 
   const proto = req.get('x-forwarded-proto') || req.protocol;
-  const callbackUrl = `${proto}://${req.get('host')}/callback`;
+  const callbackUrl = `${proto}://${req.get('host')}/oauth/callback`;
 
   try {
     const r = await fetch(`https://${session.domain}/services/oauth2/token`, {

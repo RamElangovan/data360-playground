@@ -1155,7 +1155,7 @@ function MCPTab() {
         <div className="webhook-setup-steps">
           <div className="setup-step"><span className="setup-num">1</span>Setup → <strong>MCP Servers</strong> → Select <em>data360</em> → Activate. Copy the Server URL.</div>
           <div className="setup-step"><span className="setup-num">2</span>Setup → <strong>External Client App Manager</strong> → New External Client App.</div>
-          <div className="setup-step"><span className="setup-num">3</span>Enable OAuth. Set Callback URL to: <code style={{ fontSize: 11 }}>{window.location.origin}/callback</code></div>
+          <div className="setup-step"><span className="setup-num">3</span>Enable OAuth. Set Callback URL to: <code style={{ fontSize: 11 }}>{window.location.origin}/oauth/callback</code></div>
           <div className="setup-step"><span className="setup-num">4</span>Add scopes: <strong>refresh_token</strong> and <strong>Access Salesforce hosted MCP servers (mcp_api)</strong>.</div>
           <div className="setup-step"><span className="setup-num">5</span>Security section: enable <strong>JWT-based access tokens for named users</strong>. Save and copy Consumer Key + Secret.</div>
         </div>
