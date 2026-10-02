@@ -438,21 +438,47 @@ app.get('/api/mcp/status', (req, res) => {
   res.json({ connected: true, domain: session.domain, instanceUrl: session.instanceUrl, serverUrl: session.serverUrl, connectedAt: session.connectedAt });
 });
 
+async function mcpFetch(session, method, params) {
+  const headers = {
+    Authorization: `Bearer ${session.accessToken}`,
+    'Content-Type': 'application/json',
+    Accept: 'application/json, text/event-stream',
+  };
+  if (session.mcpSessionKey) headers['Mcp-Session-Id'] = session.mcpSessionKey;
+
+  const r = await fetch(session.serverUrl, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ jsonrpc: '2.0', method, params: params || {}, id: Date.now() }),
+  });
+
+  // Capture session key Salesforce returns after initialize
+  const key = r.headers.get('Mcp-Session-Id') || r.headers.get('mcp-session-id');
+  if (key) session.mcpSessionKey = key;
+
+  return r;
+}
+
 app.post('/api/mcp/call', async (req, res) => {
   const { sessionId, method, params } = req.body;
   const session = sessionId && mcpSessions.get(sessionId);
   if (!session?.accessToken) return res.status(401).json({ error: 'Not connected to MCP. Authorize first on the MCP Connect tab.' });
 
+  // Auto-initialize to get the MCP session key before any other call
+  if (method !== 'initialize' && !session.mcpSessionKey) {
+    try {
+      const initR = await mcpFetch(session, 'initialize', {
+        protocolVersion: '2024-11-05',
+        capabilities: {},
+        clientInfo: { name: 'data360-playground', version: '1.0' },
+      });
+      // Drain the body so the connection closes cleanly
+      await initR.text();
+    } catch {}
+  }
+
   try {
-    const r = await fetch(session.serverUrl, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${session.accessToken}`,
-        'Content-Type': 'application/json',
-        Accept: 'application/json, text/event-stream',
-      },
-      body: JSON.stringify({ jsonrpc: '2.0', method, params: params || {}, id: Date.now() }),
-    });
+    const r = await mcpFetch(session, method, params);
 
     const contentType = r.headers.get('content-type') || '';
     if (contentType.includes('text/event-stream')) {
