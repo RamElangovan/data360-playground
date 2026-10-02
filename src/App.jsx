@@ -98,6 +98,7 @@ const TABS = [
   { id: 'webhook', label: 'Webhook Receiver' },
   { id: 'agent', label: 'Service Agent' },
   { id: 'mcp', label: 'MCP Connect' },
+  { id: 'chat', label: 'AI Chat' },
 ];
 
 // ── Shared components ─────────────────────────────────────────────
@@ -1336,6 +1337,160 @@ function MCPTab() {
   );
 }
 
+// ── Tab: AI Chat ─────────────────────────────────────────────────
+
+const CHAT_WELCOME = `👋 Hi! I'm your Data 360 AI assistant for Coral Cloud Resorts.
+
+I can query guest profiles, booking history, revenue data, calculated insights, and more — all powered by Salesforce Data 360 MCP tools.
+
+Try asking:
+• "Who are the top 5 guests by total spend?"
+• "How many bookings were confirmed last month?"
+• "What are the most popular experiences?"
+• "Create a calculated insight for average booking value by location"`;
+
+function ChatMessage({ msg }) {
+  const [showTools, setShowTools] = useState(false);
+  const isUser = msg.role === 'user';
+  return (
+    <div className={`chat-msg ${isUser ? 'chat-msg-user' : 'chat-msg-model'}`}>
+      <div className={`chat-bubble ${isUser ? 'chat-bubble-user' : 'chat-bubble-model'}`}>
+        {msg.text}
+      </div>
+      {!isUser && msg.toolsUsed?.length > 0 && (
+        <div className="chat-tools-badge" onClick={() => setShowTools(s => !s)}>
+          ⚙ {msg.toolsUsed.length} tool{msg.toolsUsed.length !== 1 ? 's' : ''} used {showTools ? '▲' : '▼'}
+          {showTools && (
+            <div className="chat-tool-details">
+              {msg.toolsUsed.map((t, i) => (
+                <div key={i} className="chat-tool-item">
+                  <span className="chat-tool-name">{t.name}</span>
+                  <pre className="chat-tool-args">{JSON.stringify(t.args, null, 2)}</pre>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ChatTab() {
+  const [sid] = useState(() => localStorage.getItem(MCP_SESSION_KEY) || '');
+  const [mcpOk, setMcpOk] = useState(null);
+  const [messages, setMessages] = useState([{ role: 'model', text: CHAT_WELCOME, toolsUsed: [] }]);
+  const [input, setInput] = useState('');
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState('');
+  const bottomRef = useRef(null);
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    if (!sid) { setMcpOk(false); return; }
+    fetch(`/api/mcp/status?sid=${sid}`)
+      .then(r => r.json())
+      .then(d => setMcpOk(d.connected))
+      .catch(() => setMcpOk(false));
+  }, [sid]);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, sending]);
+
+  async function send() {
+    const text = input.trim();
+    if (!text || sending) return;
+    setInput('');
+    setError('');
+    const next = [...messages, { role: 'user', text, toolsUsed: [] }];
+    setMessages(next);
+    setSending(true);
+    try {
+      const r = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: sid, messages: next.map(m => ({ role: m.role, text: m.text })) }),
+      });
+      const data = await r.json();
+      if (!r.ok) { setError(data.error || 'Error'); return; }
+      setMessages(prev => [...prev, { role: 'model', text: data.text, toolsUsed: data.toolsUsed || [] }]);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSending(false);
+      inputRef.current?.focus();
+    }
+  }
+
+  function onKey(e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+  }
+
+  if (mcpOk === null) return (
+    <div className="tab-content">
+      <div className="tab-section" style={{ textAlign: 'center', padding: 48 }}>
+        <div className="profile-spinner" />
+      </div>
+    </div>
+  );
+
+  if (!mcpOk) return (
+    <div className="tab-content">
+      <div className="gate-msg">
+        <span className="gate-icon">🔌</span>
+        <p>Connect to Data 360 MCP first on the <strong>MCP Connect</strong> tab.</p>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="tab-content">
+      <div className="tab-section" style={{ padding: 0, overflow: 'hidden' }}>
+        <div className="chat-header">
+          <span className="chat-header-icon">🤖</span>
+          <div>
+            <div className="chat-header-title">Data 360 AI Assistant</div>
+            <div className="chat-header-sub">Powered by Gemini · Connected to Salesforce Data 360 MCP</div>
+          </div>
+          <button className="btn-ghost btn-xs" style={{ marginLeft: 'auto', color: 'rgba(255,255,255,.8)', borderColor: 'rgba(255,255,255,.3)' }}
+            onClick={() => setMessages([{ role: 'model', text: CHAT_WELCOME, toolsUsed: [] }])}>
+            Clear
+          </button>
+        </div>
+
+        <div className="chat-messages">
+          {messages.map((msg, i) => <ChatMessage key={i} msg={msg} />)}
+          {sending && (
+            <div className="chat-msg chat-msg-model">
+              <div className="chat-bubble chat-bubble-model chat-thinking">
+                <span className="chat-dot" /><span className="chat-dot" /><span className="chat-dot" />
+              </div>
+            </div>
+          )}
+          <div ref={bottomRef} />
+        </div>
+
+        {error && (
+          <div className="alert alert-error" style={{ margin: '0 16px 10px', fontSize: 13 }}>
+            <strong>Error</strong><p>{error}</p>
+          </div>
+        )}
+
+        <div className="chat-input-row">
+          <textarea ref={inputRef} className="chat-input" rows={1}
+            placeholder="Ask about your Data 360 data…"
+            value={input} onChange={e => setInput(e.target.value)}
+            onKeyDown={onKey} disabled={sending} />
+          <button className="chat-send-btn" onClick={send} disabled={!input.trim() || sending}>
+            {sending ? '…' : 'Send ↑'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Root App ──────────────────────────────────────────────────────
 
 export default function App() {
@@ -1380,6 +1535,7 @@ export default function App() {
         {activeTab === 'webhook' && <WebhookTab />}
         {activeTab === 'agent' && <AgentTab />}
         {activeTab === 'mcp' && <MCPTab />}
+        {activeTab === 'chat' && <ChatTab />}
       </main>
 
       <footer className="footer">

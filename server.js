@@ -508,6 +508,111 @@ app.delete('/api/mcp/session', (req, res) => {
   res.json({ disconnected: true });
 });
 
+async function parseMcpResponse(r) {
+  const ct = r.headers.get('content-type') || '';
+  if (ct.includes('text/event-stream')) {
+    const text = await r.text();
+    const events = text.split('\n\n').filter(Boolean).map(block => {
+      const dataLine = block.split('\n').find(l => l.startsWith('data:'));
+      if (!dataLine) return null;
+      try { return JSON.parse(dataLine.slice(5).trim()); } catch { return null; }
+    }).filter(Boolean);
+    return events[0];
+  }
+  return r.json();
+}
+
+// ── AI Chat (Gemini + MCP tools) ──────────────────────────────────────────────
+
+const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
+
+const SYSTEM_PROMPT = `You are a helpful Data 360 AI assistant for Coral Cloud Resorts. You have access to tools that can query and manage Salesforce Data Cloud. Use them to answer questions about guests, bookings, revenue, calculated insights, and experiences. Be concise, highlight key insights, and format numbers clearly. If a question requires data you cannot access with the available tools, say so.`;
+
+app.post('/api/chat', async (req, res) => {
+  const { sessionId, messages } = req.body;
+  const session = sessionId && mcpSessions.get(sessionId);
+  if (!session?.accessToken) return res.status(401).json({ error: 'Not connected to MCP. Connect on the MCP Connect tab first.' });
+  if (!process.env.GEMINI_API_KEY) return res.status(503).json({ error: 'GEMINI_API_KEY not configured on this server.' });
+
+  await mcpEnsureSession(session);
+
+  // Cache tools list per MCP session
+  if (!session.tools) {
+    try {
+      const r = await mcpPost(session, { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
+      const data = await parseMcpResponse(r);
+      session.tools = data?.result?.tools || [];
+    } catch { session.tools = []; }
+  }
+
+  const functionDeclarations = session.tools.map(t => ({
+    name: t.name,
+    description: t.description || '',
+    parameters: t.inputSchema || { type: 'object', properties: {} },
+  }));
+
+  // Build conversation — skip the welcome model message, start from first user turn
+  const firstUserIdx = messages.findIndex(m => m.role === 'user');
+  if (firstUserIdx < 0) return res.json({ text: 'Please send a message.', toolsUsed: [] });
+
+  let loopContents = messages.slice(firstUserIdx).map(m => ({
+    role: m.role === 'user' ? 'user' : 'model',
+    parts: [{ text: m.text }],
+  }));
+
+  const toolsUsed = [];
+
+  for (let iter = 0; iter < 6; iter++) {
+    const geminiBody = {
+      systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+      contents: loopContents,
+      ...(functionDeclarations.length ? { tools: [{ functionDeclarations }] } : {}),
+    };
+
+    const r = await fetch(`${GEMINI_URL}?key=${process.env.GEMINI_API_KEY}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(geminiBody),
+    });
+    const data = await r.json();
+    if (!r.ok) return res.status(500).json({ error: data.error?.message || JSON.stringify(data.error) });
+
+    const parts = data.candidates?.[0]?.content?.parts || [];
+    const funcPart = parts.find(p => p.functionCall);
+
+    if (!funcPart) {
+      const text = parts.map(p => p.text || '').join('').trim();
+      return res.json({ text: text || '(no response)', toolsUsed });
+    }
+
+    const { name, args } = funcPart.functionCall;
+    let toolResult = '';
+    try {
+      const toolR = await mcpPost(session, {
+        jsonrpc: '2.0', id: Date.now(), method: 'tools/call',
+        params: { name, arguments: args },
+      });
+      const toolData = await parseMcpResponse(toolR);
+      const content = toolData?.result?.content;
+      toolResult = Array.isArray(content)
+        ? content.map(c => c.text || JSON.stringify(c)).join('\n').slice(0, 8000)
+        : JSON.stringify(toolData?.result || toolData).slice(0, 8000);
+    } catch (err) {
+      toolResult = `Error: ${err.message}`;
+    }
+
+    toolsUsed.push({ name, args });
+
+    loopContents = [
+      ...loopContents,
+      { role: 'model', parts: [{ functionCall: { name, args } }] },
+      { role: 'user', parts: [{ functionResponse: { name, response: { output: toolResult } } }] },
+    ];
+  }
+
+  return res.json({ text: 'Too many tool calls — try a more specific question.', toolsUsed });
+});
+
 // ── Agentforce ───────────────────────────────────────────────────────────────
 
 
