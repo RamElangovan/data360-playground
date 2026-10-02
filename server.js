@@ -524,6 +524,20 @@ async function parseMcpResponse(r) {
 
 // ── AI Chat (Gemini + MCP tools) ──────────────────────────────────────────────
 
+// Gemini rejects JSON Schema fields it doesn't know — strip them recursively
+const GEMINI_UNSUPPORTED = new Set(['additionalProperties', '$schema', '$defs', 'definitions', 'allOf', 'anyOf', 'oneOf', 'not', 'if', 'then', 'else', 'format', 'default', 'examples', 'const', 'contentEncoding', 'contentMediaType']);
+
+function cleanSchema(schema) {
+  if (!schema || typeof schema !== 'object') return schema;
+  if (Array.isArray(schema)) return schema.map(cleanSchema);
+  const out = {};
+  for (const [k, v] of Object.entries(schema)) {
+    if (GEMINI_UNSUPPORTED.has(k)) continue;
+    out[k] = typeof v === 'object' && v !== null ? cleanSchema(v) : v;
+  }
+  return out;
+}
+
 const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
 
 const SYSTEM_PROMPT = `You are a helpful Data 360 AI assistant for Coral Cloud Resorts. You have access to tools that can query and manage Salesforce Data Cloud. Use them to answer questions about guests, bookings, revenue, calculated insights, and experiences. Be concise, highlight key insights, and format numbers clearly. If a question requires data you cannot access with the available tools, say so.`;
@@ -548,7 +562,7 @@ app.post('/api/chat', async (req, res) => {
   const functionDeclarations = session.tools.map(t => ({
     name: t.name,
     description: t.description || '',
-    parameters: t.inputSchema || { type: 'object', properties: {} },
+    parameters: cleanSchema(t.inputSchema || { type: 'object', properties: {} }),
   }));
 
   // Build conversation — skip the welcome model message, start from first user turn
