@@ -1451,7 +1451,7 @@ function ChatTab() {
           <span className="chat-header-icon">🤖</span>
           <div>
             <div className="chat-header-title">Data 360 AI Assistant</div>
-            <div className="chat-header-sub">Powered by Gemini 2.5 Flash · Connected to Salesforce Data 360 MCP</div>
+            <div className="chat-header-sub">Powered by Gemini 3.8 Flash · Connected to Salesforce Data 360 MCP</div>
           </div>
           <button className="btn-ghost btn-xs" style={{ marginLeft: 'auto', color: 'rgba(255,255,255,.8)', borderColor: 'rgba(255,255,255,.3)' }}
             onClick={() => setMessages([{ role: 'model', text: CHAT_WELCOME, toolsUsed: [] }])}>

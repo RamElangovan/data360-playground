@@ -538,7 +538,7 @@ function cleanSchema(schema) {
   return out;
 }
 
-const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
+const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent';
 
 const SYSTEM_PROMPT = `You are a helpful Data 360 AI assistant for Coral Cloud Resorts. You have access to tools that can query and manage Salesforce Data Cloud. Use them to answer questions about guests, bookings, revenue, calculated insights, and experiences. Be concise, highlight key insights, and format numbers clearly. If a question requires data you cannot access with the available tools, say so.`;
 
