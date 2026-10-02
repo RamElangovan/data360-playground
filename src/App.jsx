@@ -1028,6 +1028,104 @@ function AgentTab() {
   );
 }
 
+// ── MCP Result Renderer ───────────────────────────────────────────
+
+function ToolCard({ tool }) {
+  const [open, setOpen] = useState(false);
+  const props = tool.inputSchema?.properties || {};
+  const required = tool.inputSchema?.required || [];
+  const paramCount = Object.keys(props).length;
+  return (
+    <div className="mcp-tool-card">
+      <div className="mcp-tool-header" onClick={() => paramCount > 0 && setOpen(o => !o)}>
+        <span className="mcp-tool-name">{tool.name}</span>
+        {paramCount > 0 && <span className="mcp-tool-toggle">{open ? '▲' : '▼'} {paramCount} param{paramCount !== 1 ? 's' : ''}</span>}
+      </div>
+      {tool.description && <p className="mcp-tool-desc">{tool.description}</p>}
+      {open && paramCount > 0 && (
+        <div className="mcp-tool-params">
+          {Object.entries(props).map(([k, v]) => (
+            <div key={k} className="mcp-param-row">
+              <span className="mcp-param-name">{k}{required.includes(k) ? <span className="mcp-param-req">*</span> : ''}</span>
+              <span className="mcp-param-type">{v.type || 'any'}</span>
+              {v.description && <span className="mcp-param-desc">{v.description}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MCPResultView({ result, method }) {
+  const [showRaw, setShowRaw] = useState(false);
+  const { status, ok, body } = result;
+
+  const payload = body?.streaming ? body.events?.[0] : body;
+  const rpcResult = payload?.result;
+  const rpcError = payload?.error || body?.error;
+
+  const badge = (
+    <span className={`resp-badge ${ok ? 'resp-ok' : 'resp-err'}`}>
+      HTTP {status} {ok ? '✓' : '✗'}
+    </span>
+  );
+
+  let content;
+
+  if (rpcError) {
+    content = (
+      <div className="mcp-error-box">
+        <div className="mcp-error-code">Error {rpcError.code}</div>
+        <div className="mcp-error-msg">{rpcError.message}</div>
+      </div>
+    );
+  } else if (rpcResult?.tools) {
+    const tools = rpcResult.tools;
+    content = (
+      <div>
+        <div className="mcp-tools-meta">{tools.length} tool{tools.length !== 1 ? 's' : ''} available from Data 360 MCP server</div>
+        <div className="mcp-tools-list">
+          {tools.map(t => <ToolCard key={t.name} tool={t} />)}
+        </div>
+      </div>
+    );
+  } else if (rpcResult?.protocolVersion || rpcResult?.serverInfo) {
+    const s = rpcResult.serverInfo || {};
+    const caps = rpcResult.capabilities || {};
+    content = (
+      <div className="mcp-init-view">
+        <div className="mcp-init-row"><span className="mcp-init-label">Server</span><span className="mcp-init-val">{s.name || '—'} {s.version || ''}</span></div>
+        <div className="mcp-init-row"><span className="mcp-init-label">Protocol</span><span className="mcp-init-val">{rpcResult.protocolVersion}</span></div>
+        <div className="mcp-init-row"><span className="mcp-init-label">Capabilities</span><span className="mcp-init-val">{Object.keys(caps).join(', ') || 'none'}</span></div>
+      </div>
+    );
+  } else if (body?.streaming) {
+    content = (
+      <div>
+        <p className="section-desc">SSE stream — {body.events?.length} event{body.events?.length !== 1 ? 's' : ''}</p>
+        <pre className="response-body">{JSON.stringify(body.events, null, 2)}</pre>
+      </div>
+    );
+  } else {
+    content = <pre className="response-body">{JSON.stringify(body, null, 2)}</pre>;
+  }
+
+  return (
+    <div style={{ marginTop: 20 }}>
+      <h3 className="section-heading">
+        Response {badge}
+        <button className="btn-ghost btn-xs" style={{ marginLeft: 'auto' }} onClick={() => setShowRaw(r => !r)}>
+          {showRaw ? 'Formatted' : 'Raw JSON'}
+        </button>
+      </h3>
+      {showRaw
+        ? <pre className="response-body">{JSON.stringify(body, null, 2)}</pre>
+        : content}
+    </div>
+  );
+}
+
 // ── Tab: MCP Connect ─────────────────────────────────────────────
 
 const MCP_CONFIG_KEY = 'mcp_config';
@@ -1231,20 +1329,7 @@ function MCPTab() {
           <button className="btn-primary" onClick={callMcp} disabled={calling}>
             {calling ? <><span className="spinner" /> Calling MCP…</> : 'Send MCP Call'}
           </button>
-          {callResult && (
-            <div style={{ marginTop: 20 }}>
-              <h3 className="section-heading">
-                Response
-                <span className={`resp-badge ${callResult.ok ? 'resp-ok' : 'resp-err'}`}>
-                  HTTP {callResult.status} {callResult.ok ? '✓' : '✗'}
-                </span>
-              </h3>
-              {callResult.body?.streaming && (
-                <p className="section-desc">SSE stream received — {callResult.body.events?.length} events.</p>
-              )}
-              <pre className="response-body">{JSON.stringify(callResult.body, null, 2)}</pre>
-            </div>
-          )}
+          {callResult && <MCPResultView result={callResult} method={method} />}
         </div>
       )}
     </div>
