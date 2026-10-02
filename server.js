@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import mysql from 'mysql2/promise';
-import { createHmac } from 'crypto';
+import { createHmac, randomBytes, createHash } from 'crypto';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
@@ -371,8 +371,11 @@ app.post('/api/mcp/initiate', async (req, res) => {
   const { domain, clientId, clientSecret, serverUrl } = req.body;
   if (!domain || !clientId || !clientSecret) return res.status(400).json({ error: 'domain, clientId, clientSecret required' });
 
+  const codeVerifier = randomBytes(32).toString('base64url');
+  const codeChallenge = createHash('sha256').update(codeVerifier).digest('base64url');
+
   const sessionId = genId();
-  mcpSessions.set(sessionId, { domain, clientId, clientSecret, serverUrl: serverUrl || 'https://api.salesforce.com/platform/mcp/v1/data/data360', createdAt: Date.now() });
+  mcpSessions.set(sessionId, { domain, clientId, clientSecret, serverUrl: serverUrl || 'https://api.salesforce.com/platform/mcp/v1/data/data360', codeVerifier, createdAt: Date.now() });
 
   const proto = req.get('x-forwarded-proto') || req.protocol;
   const callbackUrl = `${proto}://${req.get('host')}/oauth/callback`;
@@ -383,6 +386,8 @@ app.post('/api/mcp/initiate', async (req, res) => {
     redirect_uri: callbackUrl,
     scope: 'refresh_token mcp_api',
     state: sessionId,
+    code_challenge: codeChallenge,
+    code_challenge_method: 'S256',
   });
 
   res.json({ authUrl, sessionId });
@@ -409,6 +414,7 @@ app.get('/oauth/callback', async (req, res) => {
         client_id: session.clientId,
         client_secret: session.clientSecret,
         redirect_uri: callbackUrl,
+        ...(session.codeVerifier ? { code_verifier: session.codeVerifier } : {}),
       }),
     });
     const data = await r.json();
