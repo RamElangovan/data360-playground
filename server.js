@@ -361,6 +361,117 @@ app.post('/api/datacloud/guest', async (req, res) => {
   }
 });
 
+// ── MCP OAuth ────────────────────────────────────────────────────────────────
+
+const mcpSessions = new Map(); // sessionId → { domain, clientId, clientSecret, accessToken, instanceUrl, connectedAt }
+
+function genId() { return Math.random().toString(36).slice(2) + Date.now().toString(36); }
+
+app.post('/api/mcp/initiate', async (req, res) => {
+  const { domain, clientId, clientSecret, serverUrl } = req.body;
+  if (!domain || !clientId || !clientSecret) return res.status(400).json({ error: 'domain, clientId, clientSecret required' });
+
+  const sessionId = genId();
+  mcpSessions.set(sessionId, { domain, clientId, clientSecret, serverUrl: serverUrl || 'https://api.salesforce.com/platform/mcp/v1/data/data360', createdAt: Date.now() });
+
+  const proto = req.get('x-forwarded-proto') || req.protocol;
+  const callbackUrl = `${proto}://${req.get('host')}/callback`;
+
+  const authUrl = `https://${domain}/services/oauth2/authorize?` + new URLSearchParams({
+    response_type: 'code',
+    client_id: clientId,
+    redirect_uri: callbackUrl,
+    scope: 'refresh_token mcp_api',
+    state: sessionId,
+  });
+
+  res.json({ authUrl, sessionId });
+});
+
+app.get('/callback', async (req, res) => {
+  const { code, state, error, error_description } = req.query;
+
+  if (error) return res.redirect(`/?mcp_error=${encodeURIComponent(error_description || error)}`);
+
+  const session = state && mcpSessions.get(state);
+  if (!session) return res.redirect('/?mcp_error=Session+expired+or+invalid.+Please+start+again.');
+
+  const proto = req.get('x-forwarded-proto') || req.protocol;
+  const callbackUrl = `${proto}://${req.get('host')}/callback`;
+
+  try {
+    const r = await fetch(`https://${session.domain}/services/oauth2/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        client_id: session.clientId,
+        client_secret: session.clientSecret,
+        redirect_uri: callbackUrl,
+      }),
+    });
+    const data = await r.json();
+    if (!r.ok || !data.access_token) {
+      return res.redirect(`/?mcp_error=${encodeURIComponent(data.error_description || data.error || 'Token exchange failed')}`);
+    }
+    session.accessToken = data.access_token;
+    session.refreshToken = data.refresh_token;
+    session.instanceUrl = data.instance_url;
+    session.connectedAt = Date.now();
+    res.redirect(`/?mcp=ok&sid=${state}`);
+  } catch (err) {
+    res.redirect(`/?mcp_error=${encodeURIComponent(err.message)}`);
+  }
+});
+
+app.get('/api/mcp/status', (req, res) => {
+  const { sid } = req.query;
+  const session = sid && mcpSessions.get(sid);
+  if (!session?.accessToken) return res.json({ connected: false });
+  res.json({ connected: true, domain: session.domain, instanceUrl: session.instanceUrl, serverUrl: session.serverUrl, connectedAt: session.connectedAt });
+});
+
+app.post('/api/mcp/call', async (req, res) => {
+  const { sessionId, method, params } = req.body;
+  const session = sessionId && mcpSessions.get(sessionId);
+  if (!session?.accessToken) return res.status(401).json({ error: 'Not connected to MCP. Authorize first on the MCP Connect tab.' });
+
+  try {
+    const r = await fetch(session.serverUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${session.accessToken}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json, text/event-stream',
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', method, params: params || {}, id: Date.now() }),
+    });
+
+    const contentType = r.headers.get('content-type') || '';
+    if (contentType.includes('text/event-stream')) {
+      const text = await r.text();
+      const events = text.split('\n\n').filter(Boolean).map(block => {
+        const dataLine = block.split('\n').find(l => l.startsWith('data:'));
+        if (!dataLine) return null;
+        try { return JSON.parse(dataLine.slice(5).trim()); } catch { return { raw: dataLine.slice(5).trim() }; }
+      }).filter(Boolean);
+      return res.json({ streaming: true, events });
+    }
+
+    const data = await r.json();
+    res.status(r.status).json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/mcp/session', (req, res) => {
+  const { sessionId } = req.body;
+  if (sessionId) mcpSessions.delete(sessionId);
+  res.json({ disconnected: true });
+});
+
 // ── Agentforce ───────────────────────────────────────────────────────────────
 
 

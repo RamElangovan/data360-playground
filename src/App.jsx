@@ -97,6 +97,7 @@ const TABS = [
   { id: 'action', label: 'Data Action' },
   { id: 'webhook', label: 'Webhook Receiver' },
   { id: 'agent', label: 'Service Agent' },
+  { id: 'mcp', label: 'MCP Connect' },
 ];
 
 // ── Shared components ─────────────────────────────────────────────
@@ -1027,6 +1028,229 @@ function AgentTab() {
   );
 }
 
+// ── Tab: MCP Connect ─────────────────────────────────────────────
+
+const MCP_CONFIG_KEY = 'mcp_config';
+const MCP_SESSION_KEY = 'mcp_session_id';
+
+const MCP_PRESETS = [
+  { label: 'List Tools', method: 'tools/list', params: '{}' },
+  { label: 'Initialize', method: 'initialize', params: JSON.stringify({ protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'data360-playground', version: '1.0' } }, null, 2) },
+  { label: 'Ping', method: 'ping', params: '{}' },
+];
+
+function MCPTab() {
+  const savedConfig = (() => { try { return JSON.parse(localStorage.getItem(MCP_CONFIG_KEY) || '{}'); } catch { return {}; } })();
+
+  const [domain, setDomain] = useState(savedConfig.domain || '');
+  const [clientId, setClientId] = useState(savedConfig.clientId || '');
+  const [clientSecret, setClientSecret] = useState(savedConfig.clientSecret || '');
+  const [serverUrl, setServerUrl] = useState(savedConfig.serverUrl || 'https://api.salesforce.com/platform/mcp/v1/data/data360');
+  const [sessionId, setSessionId] = useState(() => localStorage.getItem(MCP_SESSION_KEY) || '');
+  const [status, setStatus] = useState(null);
+  const [connecting, setConnecting] = useState(false);
+  const [error, setError] = useState('');
+  const [method, setMethod] = useState('tools/list');
+  const [params, setParams] = useState('{}');
+  const [paramsError, setParamsError] = useState('');
+  const [calling, setCalling] = useState(false);
+  const [callResult, setCallResult] = useState(null);
+
+  async function checkStatus(sid) {
+    const id = sid || sessionId;
+    if (!id) return;
+    try {
+      const r = await fetch(`/api/mcp/status?sid=${id}`);
+      const data = await r.json();
+      setStatus(data);
+    } catch {}
+  }
+
+  useEffect(() => {
+    const sp = new URLSearchParams(window.location.search);
+    const mcpOk = sp.get('mcp') === 'ok';
+    const mcpError = sp.get('mcp_error');
+    const sid = sp.get('sid') || sessionId;
+
+    if (mcpOk || mcpError) window.history.replaceState({}, '', window.location.pathname);
+    if (mcpError) setError(decodeURIComponent(mcpError));
+    if (mcpOk && sid) {
+      localStorage.setItem(MCP_SESSION_KEY, sid);
+      setSessionId(sid);
+      checkStatus(sid);
+    } else if (sid) {
+      checkStatus(sid);
+    }
+  }, []);
+
+  async function connect() {
+    setConnecting(true);
+    setError('');
+    localStorage.setItem(MCP_CONFIG_KEY, JSON.stringify({ domain, clientId, clientSecret, serverUrl }));
+    try {
+      const r = await fetch('/api/mcp/initiate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ domain, clientId, clientSecret, serverUrl }),
+      });
+      const data = await r.json();
+      if (!r.ok || !data.authUrl) { setError(data.error || 'Failed to start auth flow'); return; }
+      localStorage.setItem(MCP_SESSION_KEY, data.sessionId);
+      setSessionId(data.sessionId);
+      window.location.href = data.authUrl;
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setConnecting(false);
+    }
+  }
+
+  async function disconnect() {
+    await fetch('/api/mcp/session', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId }),
+    }).catch(() => {});
+    localStorage.removeItem(MCP_SESSION_KEY);
+    setSessionId('');
+    setStatus({ connected: false });
+    setCallResult(null);
+  }
+
+  function loadPreset(p) {
+    setMethod(p.method);
+    setParams(p.params);
+    setParamsError('');
+    setCallResult(null);
+  }
+
+  async function callMcp() {
+    setParamsError('');
+    let parsed;
+    try { parsed = JSON.parse(params); } catch (e) { setParamsError('Invalid JSON: ' + e.message); return; }
+    setCalling(true);
+    setCallResult(null);
+    try {
+      const r = await fetch('/api/mcp/call', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId, method, params: parsed }),
+      });
+      const data = await r.json();
+      setCallResult({ status: r.status, ok: r.ok, body: data });
+    } catch (err) {
+      setCallResult({ status: 0, ok: false, body: { error: err.message } });
+    } finally {
+      setCalling(false);
+    }
+  }
+
+  const canConnect = domain && clientId && clientSecret && !connecting;
+  const isConnected = status?.connected;
+
+  return (
+    <div className="tab-content">
+      <div className="tab-section">
+        <h3 className="section-heading">Step 1 — Salesforce Org Setup</h3>
+        <div className="webhook-setup-steps">
+          <div className="setup-step"><span className="setup-num">1</span>Setup → <strong>MCP Servers</strong> → Select <em>data360</em> → Activate. Copy the Server URL.</div>
+          <div className="setup-step"><span className="setup-num">2</span>Setup → <strong>External Client App Manager</strong> → New External Client App.</div>
+          <div className="setup-step"><span className="setup-num">3</span>Enable OAuth. Set Callback URL to: <code style={{ fontSize: 11 }}>{window.location.origin}/callback</code></div>
+          <div className="setup-step"><span className="setup-num">4</span>Add scopes: <strong>refresh_token</strong> and <strong>Access Salesforce hosted MCP servers (mcp_api)</strong>.</div>
+          <div className="setup-step"><span className="setup-num">5</span>Security section: enable <strong>JWT-based access tokens for named users</strong>. Save and copy Consumer Key + Secret.</div>
+        </div>
+      </div>
+
+      <div className="tab-section">
+        <h3 className="section-heading">Step 2 — Connect</h3>
+        {isConnected ? (
+          <div>
+            <div className="alert alert-success">
+              <strong>✓ Connected to MCP</strong>
+              <p className="token-url">{status.instanceUrl}</p>
+              <p style={{ marginTop: 4, fontSize: 12, color: 'var(--text-muted)' }}>
+                Connected {status.connectedAt ? new Date(status.connectedAt).toLocaleTimeString() : ''}
+                {' · '}MCP Server: {status.serverUrl}
+              </p>
+            </div>
+            <button className="btn-ghost" style={{ marginTop: 12 }} onClick={disconnect}>Disconnect</button>
+          </div>
+        ) : (
+          <>
+            <div className="field-group">
+              <div className="field full-width">
+                <label>Salesforce Domain</label>
+                <input type="text" placeholder="myorg.my.salesforce.com" value={domain} onChange={e => setDomain(e.target.value.trim())} />
+                <span className="hint">My Domain — without https://</span>
+              </div>
+              <div className="field">
+                <label>Consumer Key (Client ID)</label>
+                <input type="text" placeholder="3MVG9..." value={clientId} onChange={e => setClientId(e.target.value.trim())} />
+              </div>
+              <div className="field">
+                <label>Consumer Secret</label>
+                <input type="password" placeholder="Consumer Secret" value={clientSecret} onChange={e => setClientSecret(e.target.value.trim())} />
+              </div>
+              <div className="field full-width">
+                <label>MCP Server URL</label>
+                <input type="text" value={serverUrl} onChange={e => setServerUrl(e.target.value.trim())} />
+                <span className="hint">Copied from Setup → MCP Servers → data360</span>
+              </div>
+            </div>
+            <button className="btn-primary" onClick={connect} disabled={!canConnect}>
+              {connecting ? <><span className="spinner" /> Redirecting to Salesforce…</> : 'Authorize with Salesforce →'}
+            </button>
+          </>
+        )}
+        {error && <div className="alert alert-error" style={{ marginTop: 12 }}><strong>Error</strong><p>{error}</p></div>}
+      </div>
+
+      {isConnected && (
+        <div className="tab-section">
+          <h3 className="section-heading">Step 3 — Call MCP Server</h3>
+          <p className="section-desc">Send a JSON-RPC call to the Data 360 MCP server. Use the presets to explore available tools.</p>
+          <div className="preset-row" style={{ marginBottom: 12 }}>
+            <span className="preset-label">Presets:</span>
+            {MCP_PRESETS.map(p => (
+              <button key={p.label} className="btn-ghost" onClick={() => loadPreset(p)}>{p.label}</button>
+            ))}
+          </div>
+          <div className="field" style={{ maxWidth: 400 }}>
+            <label>Method</label>
+            <input type="text" value={method} onChange={e => setMethod(e.target.value.trim())} placeholder="tools/list" />
+          </div>
+          <div className="field" style={{ marginTop: 12 }}>
+            <label>Params (JSON)</label>
+            <textarea className="code-editor" rows={6} value={params} spellCheck={false}
+              onChange={e => { setParams(e.target.value); setParamsError(''); }} />
+            {paramsError && <div className="alert alert-error"><strong>Invalid JSON</strong><p>{paramsError}</p></div>}
+          </div>
+          <div className="endpoint-bar" style={{ marginBottom: 12 }}>
+            POST <span className="endpoint-path">{status.serverUrl}</span>
+          </div>
+          <button className="btn-primary" onClick={callMcp} disabled={calling}>
+            {calling ? <><span className="spinner" /> Calling MCP…</> : 'Send MCP Call'}
+          </button>
+          {callResult && (
+            <div style={{ marginTop: 20 }}>
+              <h3 className="section-heading">
+                Response
+                <span className={`resp-badge ${callResult.ok ? 'resp-ok' : 'resp-err'}`}>
+                  HTTP {callResult.status} {callResult.ok ? '✓' : '✗'}
+                </span>
+              </h3>
+              {callResult.body?.streaming && (
+                <p className="section-desc">SSE stream received — {callResult.body.events?.length} events.</p>
+              )}
+              <pre className="response-body">{JSON.stringify(callResult.body, null, 2)}</pre>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Root App ──────────────────────────────────────────────────────
 
 export default function App() {
@@ -1070,6 +1294,7 @@ export default function App() {
         {activeTab === 'graphs' && <DataGraphsTab authState={authState} />}
         {activeTab === 'webhook' && <WebhookTab />}
         {activeTab === 'agent' && <AgentTab />}
+        {activeTab === 'mcp' && <MCPTab />}
       </main>
 
       <footer className="footer">
