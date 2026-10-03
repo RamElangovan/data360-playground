@@ -595,7 +595,8 @@ app.post('/api/chat', async (req, res) => {
     const funcPart = parts.find(p => p.functionCall);
 
     if (!funcPart) {
-      const text = parts.map(p => p.text || '').join('').trim();
+      // Filter out thought parts for the final text response
+      const text = parts.filter(p => !p.thought).map(p => p.text || '').join('').trim();
       return res.json({ text: text || '(no response)', toolsUsed });
     }
 
@@ -619,7 +620,7 @@ app.post('/api/chat', async (req, res) => {
 
     loopContents = [
       ...loopContents,
-      { role: 'model', parts: [{ functionCall: { name, args } }] },
+      { role: 'model', parts },  // preserve all parts including thoughtSignature
       { role: 'user', parts: [{ functionResponse: { name, response: { output: toolResult } } }] },
     ];
   }
